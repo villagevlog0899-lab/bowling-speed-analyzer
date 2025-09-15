@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bowling Speed Analyzer</title>
+    
+    <!-- FAVICON WALI LINE YAHAN ADD KAREIN (UPDATED) -->
+    <link rel="icon" href="favicon.png"> 
+    
+    <!-- External Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Internal CSS Styles -->
+    <style>
+      body { font-family: 'Inter', sans-serif; }
+      .animate-fade-in { animation: fadeIn 0.5s ease-in-out; }
+      .animate-fade-in-short { animation: fadeIn 0.3s ease-in-out; }
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+      .animate-scale-in-dialog { animation: scaleIn 0.2s ease-out; }
+      .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; border-radius: 10px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #64748b; }
+      
+      .graph-tooltip-group { opacity: 0; transition: opacity 0.2s ease-in-out; pointer-events: none; }
+      .graph-point-group:hover .graph-tooltip-group { opacity: 1; }
+
+      /* Video Analyzer ke liye Naye Styles */
+      .video-container { overflow: hidden; position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background-color: black; }
+      .video-player-element { /* video tag itself */
+        touch-action: none; /* Prevent default touch actions like zoom on mobile */
+        transform-origin: center center;
+      }
+      .video-panning { cursor: grab; }
+      .video-panning:active { cursor: grabbing; }
+
+      /* Custom scrollbar for modals */
+      .modal-custom-scrollbar::-webkit-scrollbar { width: 8px; }
+      .modal-custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; border-radius: 10px; }
+      .modal-custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+      .modal-custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+      /* Splash Screen Styles (UPDATED) */
+      .splash-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #0F172A; /* bg-slate-900 */
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000; /* Make sure it's on top */
+        transition: opacity 0.5s ease-out;
+      }
+      .splash-screen.fade-out {
+        opacity: 0;
+        pointer-events: none; /* Make it unclickable once faded */
+      }
+      .splash-logo-image { /* New style for the splash logo image */
+          width: 150px; /* Adjust size as needed */
+          height: 150px;
+          object-fit: contain;
+          margin-bottom: 20px; /* Space between logo and loading text */
+      }
+    </style>
+</head>
+<body class="bg-slate-900">
+
+    <div id="root"></div>
+
+    <!-- React Application Code -->
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+        
+        // --- Constants ---
+        const AppState = { Idle: 0, Timing: 1, Finished: 2 };
+        const VideoState = { Idle: 'idle', Recording: 'recording', Reviewing: 'reviewing', Finished: 'finished' };
+        const FRAME_STEP_SECONDS = 1 / 30;
+        const GUEST_PROFILE_ID = 'guest';
+        const MAX_UNREALISTIC_SPEED_KPH = 180; 
+
+        // --- UI Components (Icons) ---
+        const HistoryIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"> <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /> </svg> );
+        const TrashIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"> <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.134-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.067-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /> </svg> );
+        const CloseIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"> <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /> </svg> );
+        const VideoCameraIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"> <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9A2.25 2.25 0 0 0 13.5 5.25h-9A2.25 2.25 0 0 0 2.25 7.5v9A2.25 2.25 0 0 0 4.5 18.75Z" /> </svg> );
+        const StopWatchIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"> <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /> </svg> );
+        const StopCircleIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"> <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /> <path strokeLinecap="round" strokeLinejoin="round" d="M9 9.563C9 9.253 9.253 9 9.563 9h4.874c.31 0 .563.253.563.563v4.874c0 .31-.253.563-.563.563H9.563A.562.562 0 0 1 9 14.437V9.564Z" /> </svg> );
+        const StepForwardIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"> <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /> <path strokeLinecap="round" strokeLinejoin="round" d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112ZM9.75 12.75v-1.5" /> </svg> );
+        const StepBackwardIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"> <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /> <path strokeLinecap="round" strokeLinejoin="round" d="M8.09 11.672a.375.375 0 0 1 0 .656l5.603 3.113a.375.375 0 0 1 .557-.328V8.887c0-.286-.307-.466.557-.327l-5.603 3.112ZM14.25 12.75v-1.5" /> </svg> );
+        const UserCircleIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"> <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /> </svg> );
+        const GearIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M10.343 3.94c.09-.542.56-1.007 1.11-1.226.55-.22 1.156-.22 1.706 0 .55.22 1.02.684 1.11 1.226M10.343 20.06c.09.542.56 1.007 1.11 1.226.55.22 1.156-.22 1.706 0 .55-.22 1.02-.684 1.11-1.226m-1.11-4.06a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9ZM18.75 10.5h.008v.008h-.008v-.008ZM18.75 16.5h.008v.008h-.008v-.008h-.008ZM4.5 10.5h.008v.008H4.5v-.008ZM4.5 16.5h.008v.008H4.5v-.008Z" /></svg> );
+        const UploadIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg> );
+        // Back arrow icon
+        const ArrowLeftIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg> );
+        // Play icon
+        const PlayIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"> <path fillRule="evenodd" d="M4.5 5.653c0-1.427 1.529-2.313 2.74-1.652L19.74 12 7.24 20.003c-1.211.661-2.74-.225-2.74-1.653V5.653Z" clipRule="evenodd" /> </svg> );
+        // Pause icon
+        const PauseIcon = ({ className }) => ( <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"> <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.47 1.408 2.47 2.801v10.344c0 1.394-.973 2.627-2.47 2.801a49.232 49.232 0 0 1-11.36 0c-1.497-.174-2.47-1.408-2.47-2.801V5.378c0-1.394.973-2.628 2.47-2.801Z" clipRule="evenodd" /> </svg> );
+        const FastRewindIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"> <path fillRule="evenodd" d="M11.53 10.055a.75.75 0 0 1 0 1.07l-4.72 4.72a.75.75 0 0 1-1.28-.53v-9.39a.75.75 0 0 1 1.28-.53l4.72 4.72Zm7.5 0a.75.75 0 0 1 0 1.07l-4.72 4.72a.75.75 0 0 1-1.28-.53v-9.39a.75.75 0 0 1 1.28-.53l4.72 4.72Z" clipRule="evenodd" /> </svg> );
+        const FastForwardIcon = ({ className }) => (<svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"> <path fillRule="evenodd" d="M12.47 10.055a.75.75 0 0 1 0 1.07l4.72 4.72a.75.75 0 0 0 1.28-.53v-9.39a.75.75 0 0 0-1.28-.53l-4.72 4.72Zm-7.5 0a.75.75 0 0 1 0 1.07l4.72 4.72a.75.75 0 0 0 1.28-.53v-9.39a.75.75 0 0 0-1.28-.53l-4.72 4.72Z" clipRule="evenodd" /> </svg> );
+
+        // Helper function to format time safely
+        const formatTime = (seconds) => {
+            if (isNaN(seconds) || !isFinite(seconds) || seconds < 0) {
+                return '00:00:00'; // Default display for invalid time
+            }
+            const date = new Date(seconds * 1000); // Convert to milliseconds
+            // toISOString() returns "YYYY-MM-DDTHH:mm:ss.sssZ"
+            // substr(11, 8) extracts "HH:mm:ss"
+            return date.toISOString().substr(11, 8);
+        };
+
+        const Modal = ({ children, onClose }) => { useEffect(() => { const handleKeyDown = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', handleKeyDown); document.body.style.overflow = 'hidden'; return () => { window.removeEventListener('keydown', handleKeyDown); document.body.style.overflow = 'auto'; }; }, [onClose]); return ( <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in-short" onClick={onClose}> <div className="w-full max-w-2xl bg-slate-800 p-4 sm:p-6 rounded-2xl shadow-lg border border-slate-700 space-y-4 animate-scale-in-dialog flex flex-col" onClick={(e) => e.stopPropagation()}> {children} </div> </div> ); };
+        const InstructionsModal = ({ onClose }) => ( <Modal onClose={onClose}> <div className="flex justify-between items-center px-2 mb-4"> <h2 className="text-2xl font-bold text-cyan-400">How to Use This App</h2> <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors" aria-label="Close instructions"><CloseIcon className="w-6 h-6" /></button> </div> <div className="space-y-4 text-slate-300 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar modal-custom-scrollbar"> <p>For the best results, always try to use a video recorded from a <b>side-angle</b>.</p> <h4 className="font-semibold text-cyan-400 pt-2">Manual Timer (Stopwatch)</h4> <ul className="list-disc list-inside space-y-1"> <li><b>Click Mode:</b> Press 'Start' on ball release and 'Stop' when it reaches the stumps.</li> <li><b>Press & Hold Mode:</b> For faster timing, enable this mode. Simply press and hold the button at release, and let go when the ball arrives.</li> <li>The timer will auto-reset after 15 seconds to prevent accidental long timings.</li> </ul> <h4 className="font-semibold text-cyan-400 pt-2">Video Analyzer (Most Accurate)</h4> <ol className="list-decimal list-inside space-y-2"> <li><b>Upload Your Video:</b> Press 'Record Video' or 'Upload Video' to begin.</li> <li><b>Navigate & Control:</b> <ul className="list-['-_'] list-inside ml-4 mt-1 space-y-1"> <li>Use the Play/Pause button to start or stop the video.</li> <li>Use the frame-by-frame step buttons (<b>&#9664;&#9664; -10, &#9664; -5, &#9664; -1, +1 &#9654;, +5 &#9654;&#9654;, +10 &#9654;&#9654;</b>) for precise movement.</li> <li>Adjust playback speed (0.25x to 1.5x) for slow-motion analysis.</li> </ul> </li> <li><b>Mark the Points:</b> <ul className="list-['-_'] list-inside ml-4 mt-1 space-y-1"> <li>Pause the video at the exact moment the ball leaves the bowler's <b>hand</b> and press 'Set Start'.</li> <li>Move the video forward to where the ball <b>reaches the stumps</b> and press 'Set End'.</li> </ul> </li> <li><b>Use Precision Tools:</b> <ul className="list-['-_'] list-inside ml-4 mt-1 space-y-1"> <li>For perfect accuracy, use the <b>Zoom (+/-)</b> buttons to magnify the video.</li> <li>When zoomed in, <b>click and drag</b> on the video to pan (move around) and examine specific areas.</li> </ul> </li>  </ol> </div> <div className="flex justify-end pt-6 border-t border-slate-700"> <button onClick={onClose} className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 font-semibold rounded-md transition-colors">Got It</button> </div> </Modal> );
+        const VideoTimeline = ({ duration, currentTime, startTime, endTime }) => { if (!duration || duration === Infinity) return null; const progressPercent = (currentTime / duration) * 100; const startPercent = startTime !== null ? (startTime / duration) * 100 : null; const endPercent = endTime !== null ? (endTime / duration) * 100 : null; return ( <div className="w-full max-w-2xl bg-slate-700 h-3 rounded-full relative my-2 group cursor-pointer"> {startPercent !== null && endPercent !== null && endPercent > startPercent && ( <div className="absolute top-0 h-full bg-cyan-500/50 rounded-full" style={{ left: `${startPercent}%`, width: `${endPercent - startPercent}%` }}></div> )} <div className="absolute top-0 h-full bg-cyan-400 rounded-full" style={{ width: `${progressPercent}%` }}></div> {startPercent !== null && ( <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-green-500 border-2 border-white rounded-full -translate-x-1/2 shadow-lg" style={{ left: `${startPercent}%` }}> <span className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10"> Start: {startTime.toFixed(2)}s </span> </div> )} {endPercent !== null && ( <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-red-500 border-2 border-white rounded-full -translate-x-1/2 shadow-lg" style={{ left: `${endPercent}%` }}> <span className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-xs px-2 py-1 rounded opacity:0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10"> End: {endTime.toFixed(2)}s </span> </div> )} </div> ); };
+        
+        const SpeedDisplay = ({ speedMPH, speedKPH, distance, distanceUnit, timeSeconds }) => (
+            <div className="text-center animate-fade-in flex flex-col items-center space-y-6">
+                <div>
+                    <p className="text-2xl text-slate-300">Your Speed</p>
+                    <h2 className="text-7xl font-bold text-white tracking-tighter tabular-nums"> {speedKPH !== null ? speedKPH.toFixed(1) : '0.0'} <span className="text-4xl text-slate-400 align-baseline">KPH</span> </h2>
+                    <p className="text-2xl text-slate-400 mt-1 tabular-nums"> {speedMPH !== null ? speedMPH.toFixed(1) : '0.0'} MPH </p>
+                </div>
+                { (distance !== null && timeSeconds !== null && timeSeconds > 0) && ( // Ensure timeSeconds is valid
+                    <div className="text-slate-400 text-lg flex flex-col sm:flex-row gap-2 sm:gap-4">
+                        <p><span className="font-semibold">Distance:</span> {distance.toFixed(1)} {distanceUnit}</p>
+                        <p><span className="font-semibold">Time:</span> {timeSeconds.toFixed(2)} s</p>
+                    </div>
+                )}
+            </div>
+        );
+
+        const HistoryItem = ({ entry, onDelete }) => ( <li className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 animate-fade-in-short flex justify-between items-center group"> <div> <div className="flex items-baseline"> <span className="font-bold text-2xl text-white">{entry.speedKPH.toFixed(1)}</span> <span className="text-lg text-slate-400 ml-1">KPH</span> <span className="text-lg text-slate-500 ml-3">/ {entry.speedMPH.toFixed(1)} MPH</span> </div> <span className="text-xs text-slate-500"> {new Date(entry.timestamp).toLocaleString()} </span> </div> <button onClick={() => onDelete(entry.id)} className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-900/30 rounded-md opacity-0 group-hover:opacity-100 transition-all" aria-label="Delete this entry"> <TrashIcon className="w-5 h-5" /> </button> </li> );
+        const PerformanceGraph = ({ data }) => { const width = 500; const height = 150; const padding = 20; if (data.length < 2) return <div className="h-[150px] flex items-center justify-center text-slate-500">Not enough data to display graph.</div>; const speeds = data.map(d => d.speedKPH).reverse(); const maxSpeed = Math.max(...speeds, 0); const minSpeed = Math.Min(...speeds, 0); const speedRange = maxSpeed - minSpeed === 0 ? 1 : maxSpeed - minSpeed; const points = speeds.map((speed, i) => { const x = (i / (speeds.length - 1)) * (width - padding * 2) + padding; const y = height - ((speed - minSpeed) / speedRange) * (height - padding * 2) - padding; return `${x},${y}`; }).join(' '); return ( <div className="w-full overflow-x-auto custom-scrollbar modal-custom-scrollbar"> <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[500px]"> <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#475569" strokeWidth="1" /> <polyline fill="none" stroke="#06b6d4" strokeWidth="2" points={points} /> {speeds.map((speed, i) => { const x = (i / (speeds.length - 1)) * (width - padding * 2) + padding; const y = height - ((speed - minSpeed) / speedRange) * (height - padding * 2) - padding; const tooltipText = `${speed.toFixed(1)} KPH`; return ( <g key={i} className="graph-point-group" transform={`translate(${x}, ${y})`}> <g className="graph-tooltip-group" transform="translate(0, -22)"> <rect x="-30" y="-15" width="60" height="20" rx="4" fill="#1e293b" stroke="#334155" /> <text x="0" y="-5" textAnchor="middle" alignmentBaseline="middle" fill="white" fontSize="12" fontWeight="bold">{tooltipText}</text> </g> <circle r="4" fill="#06b6d4" stroke="#1e293b" strokeWidth="2" /> <circle r="12" fill="transparent" /> </g> ); })} </svg> </div> ); };
+        const HistoryModal = ({ history, onClear, onDeleteItem, onClose }) => { const stats = useMemo(() => { if (!history || history.length === 0) return { avg: 0, max: 0, min: 0 }; const speeds = history.map(h => h.speedKPH); return { avg: speeds.reduce((a, b) => a + b, 0) / speeds.length, max: Math.max(...speeds), min: Math.Min(...speeds), }; }, [history]); return ( <Modal onClose={onClose}> <div className="flex justify-between items-center px-2"> <h2 className="text-2xl font-bold text-cyan-400">History & Stats</h2> <div className="flex items-center gap-4"> <button onClick={onClear} className="group flex items-center gap-2 px-3 py-1.5 text-sm bg-red-900/50 text-red-300 hover:bg-red-800/70 hover:text-red-200 rounded-md transition-colors duration-200" aria-label="Clear all history" disabled={history.length === 0}> <TrashIcon className="w-4 h-4" /> Clear </button> <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors" aria-label="Close history"> <CloseIcon className="w-6 h-6" /> </button> </div> </div> {history.length > 0 ? ( <> <div className="grid grid-cols-3 gap-4 text-center p-4 bg-slate-900/50 rounded-lg"> <div> <p className="text-sm text-slate-400">Average</p> <p className="text-2xl font-bold text-white">{stats.avg.toFixed(1)} <span className="text-base text-slate-400">KPH</span></p> </div> <div> <p className="text-sm text-slate-400">Max Speed</p> <p className="text-2xl font-bold text-green-400">{stats.max.toFixed(1)} <span className="text-base text-slate-400">KPH</span></p> </div> <div> <p className="text-sm text-slate-400">Min Speed</p> <p className="text-2xl font-bold text-red-400">{stats.min.toFixed(1)} <span className="text-base text-slate-400">KPH</span></p> </div> </div> <PerformanceGraph data={history} /> <ul className="space-y-4 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar modal-custom-scrollbar"> {history.map(entry => <HistoryItem key={entry.id} entry={entry} onDelete={onDeleteItem} />)} </ul> </> ) : ( <div className="w-full text-center p-6"> <p className="text-slate-400">No history yet. Record your first speed!</p> </div> )} </Modal> ); };
+        const ProfileModal = ({ profiles, activeProfileId, onSwitch, onDelete, onAdd, onClose }) => { const [newProfileName, setNewProfileName] = useState(''); const [newProfileHand, setNewProfileHand] = useState('Right'); const handleAddProfile = (e) => { e.preventDefault(); if (newProfileName.trim()) { onAdd({ name: newProfileName.trim(), hand: newProfileHand }); setNewProfileName(''); setNewProfileHand('Right'); } }; return ( <Modal onClose={onClose}> <div className="flex justify-between items-center px-2 mb-4"> <h2 className="text-2xl font-bold text-cyan-400">Manage Profiles</h2> <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors" aria-label="Close profiles"> <CloseIcon className="w-6 h-6" /> </button> </div> <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar modal-custom-scrollbar"> {profiles.map(p => ( <div key={p.id} className={`flex justify-between items-center p-4 rounded-lg border transition-colors ${activeProfileId === p.id ? 'bg-cyan-900/50 border-cyan-700' : 'bg-slate-900/50 border-slate-700'}`}> <div className="flex items-center gap-4"> <UserCircleIcon className="w-8 h-8 text-slate-400"/> <div> <p className="font-bold text-white">{p.name}</p> <p className="text-sm text-slate-400">{p.id === GUEST_PROFILE_ID ? 'Default Profile' : `${p.hand}-handed`}</p> </div> </div> <div className="flex items-center gap-2"> {activeProfileId !== p.id && ( <button onClick={() => onSwitch(p.id)} className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 rounded-md">Switch</button> )} {p.id !== GUEST_PROFILE_ID && ( <button onClick={() => onDelete(p.id)} className="p-2 text-red-400 hover:text-red-300 hover:bg-red-900/50 rounded-md" aria-label={`Delete ${p.name} profile`}> <TrashIcon className="w-4 h-4" /> </button> )} </div> </div> ))} </div> <form onSubmit={handleAddProfile} className="pt-6 border-t border-slate-700 space-y-3"> <h3 className="text-lg font-semibold text-white px-2">Add New Profile</h3> <div className="flex flex-col sm:flex-row gap-4"> <input type="text" value={newProfileName} onChange={(e) => setNewProfileName(e.target.value)} placeholder="Enter profile name" className="flex-grow bg-slate-900 border border-slate-600 rounded-md px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none" required /> <select value={newProfileHand} onChange={(e) => setNewProfileHand(e.target.value)} className="bg-slate-900 border border-slate-600 rounded-md px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none"> <option>Right</option> <option>Left</option> </select> <button type="submit" className="px-4 py-2 bg-green-600 hover:bg-green-500 font-semibold rounded-md transition-colors">Add</button> </div> </form> </Modal> ); };
+        const AboutModal = ({ onClose }) => ( <Modal onClose={onClose}> <div className="flex justify-between items-center px-2 mb-4"> <h2 className="text-2xl font-bold text-cyan-400">About Bowling Speed Analyzer</h2> <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors" aria-label="Close about"><CloseIcon className="w-6 h-6" /></button> </div> <div className="space-y-4 text-slate-300 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar modal-custom-scrollbar"> <p className="text-lg">This application is a passion project developed by <span className="font-bold text-white">Anas Javed</span>.</p> <h3 className="font-semibold text-cyan-400 pt-2 text-xl">Our Mission</h3> <p>Our goal is to provide a free, accurate, and easy-to-use tool for cricket players, coaches, and enthusiasts to measure and improve their bowling performance. We believe that with the right data, every bowler can unlock their true potential.</p> <h3 className="font-semibold text-cyan-400 pt-2 text-xl">Key Features</h3> <ul className="list-disc list-inside space-y-2"> <li><b>Dual Mode Timer:</b> Choose between a classic Start/Stop timer or an intuitive Press & Hold mode for quick measurements. The timer auto-resets after 15 seconds to prevent accidental long timings.</li> <li><b>Advanced Video Analysis:</b> Upload or record a video for frame-perfect accuracy. Our video player includes: <ul className="list-['-_'] list-inside ml-4 mt-1"> <li>Frame-by-frame stepping controls (including <b>single-frame</b>, <b>5-frame</b>, and <b>10-frame</b> jumps).</li> <li>Variable playback speeds (0.25x to 1.5x).</li> <li><b>Zoom & Pan functionality</b> for precise point marking.</li>  </ul> </li> <li><b>Multi-Profile System:</b> Create and switch between different profiles to track the performance of multiple players separately.</li> <li><b>Detailed History & Stats:</b> Every valid delivery is saved. View your average, max, and min speeds over time with an interactive performance graph. (Speeds over 180 KPH are considered unrealistic and not saved).</li> <li><b>Customizable Settings:</b> Adjust the pitch distance (in Feet, Meters, or Yards) to match your playing conditions.</li> <li><b>Progressive Web App (PWA):</b> Install the app on your phone's home screen for a native app-like experience with splash screens and offline access.</li> </ul> </div> </Modal> );
+        const SettingsModal = ({ settings, onSave, onOpenAbout, onOpenInstructions, onClose }) => { const [distance, setDistance] = useState(settings.distance); const [unit, setUnit] = useState(settings.unit); const handleSave = () => { onSave({ distance: parseFloat(distance) || 0, unit }); onClose(); }; return ( <Modal onClose={onClose}> <div className="flex justify-between items-center px-2 mb-4"> <h2 className="text-2xl font-bold text-cyan-400">Settings</h2> <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors" aria-label="Close settings"> <CloseIcon className="w-6 h-6" /> </button> </div> <div className="space-y-4"> <label className="block"> <span className="text-slate-300">Pitch Distance</span> <div className="flex items-center gap-2 mt-2"> <input type="number" value={distance} onChange={e => setDistance(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none"/> <select value={unit} onChange={e => setUnit(e.target.value)} className="bg-slate-900 border border-slate-600 rounded-md px-3 py-2 focus:ring-2 focus:ring-cyan-500 focus:outline-none"> <option>Feet</option> <option>Meters</option> <option>Yards</option> </select> </div> </label> </div> <div className="flex justify-between items-center gap-4 pt-6 border-t border-slate-700"> <div className="flex gap-4"> <button onClick={onOpenInstructions} className="text-sm text-cyan-400 hover:text-cyan-300 hover:underline">Show Instructions</button> <button onClick={onOpenAbout} className="text-sm text-cyan-400 hover:text-cyan-300 hover:underline">About Us</button> </div> <div> <button onClick={onClose} className="px-4 py-2 bg-slate-600 hover:bg-slate-500 font-semibold rounded-md transition-colors mr-2">Cancel</button> <button onClick={handleSave} className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 font-semibold rounded-md transition-colors">Save</button> </div> </div> </Modal> ); };
+        const useLocalStorage = (key, initialValue) => { const [storedValue, setStoredValue] = useState(() => { try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : initialValue; } catch (error) { console.error(error); return initialValue; } }); const setValue = (value) => { try { const valueToStore = value instanceof Function ? value(storedValue) : value; setStoredValue(valueToStore); window.localStorage.setItem(key, JSON.stringify(valueToStore)); } catch (error) { console.error(error); } }; return [storedValue, setValue]; };
+
+        const App = () => {
+            const [profiles, setProfiles] = useLocalStorage('bowlingProfiles', [{ id: GUEST_PROFILE_ID, name: 'Guest', hand: 'Right' }]);
+            const [activeProfileId, setActiveProfileId] = useLocalStorage('bowlingActiveProfile', GUEST_PROFILE_ID);
+            const [history, setHistory] = useLocalStorage('bowlingSpeedHistory', { [GUEST_PROFILE_ID]: [] });
+            const [settings, setSettings] = useLocalStorage('bowlingSettings', { distance: 60, unit: 'Feet' });
+            const [appMode, setAppMode] = useState('manual');
+            const [appState, setAppState] = useState(AppState.Idle);
+            const [elapsedTime, setElapsedTime] = useState(0);
+            const [videoState, setVideoState] = useState(VideoState.Idle);
+            const [mediaStream, setMediaStream] = useState(null);
+            const mediaRecorderRef = useRef(null);
+            const [videoBlobUrl, setVideoBlobUrl] = useState(null);
+            const videoPlayerRef = useRef(null);
+            const fileInputRef = useRef(null);
+            const [startTime, setStartTime] = useState(null);
+            const [endTime, setEndTime] = useState(null);
+            const [videoDuration, setVideoDuration] = useState(0);
+            const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+            const [playbackRate, setPlaybackRate] = useState(1);
+            const timerRef = useRef(null);
+            const [speedMPH, setSpeedMPH] = useState(null);
+            const [speedKPH, setSpeedKPH] = useState(null);
+            const [error, setError] = useState(null);
+            const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+            const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+            const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+            const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+            const [showInstructions, setShowInstructions] = useState(false);
+            const [showSplashScreen, setShowSplashScreen] = useState(true); 
+            const activeProfileHistory = history[activeProfileId] || [];
+            const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles.find(p => p.id === GUEST_PROFILE_ID);
+            const [isPressAndHoldMode, setIsPressAndHoldMode] = useState(false);
+            const [zoom, setZoom] = useState(1);
+            const [pan, setPan] = useState({ x: 0, y: 0 });
+            const panStateRef = useRef({ isPanning: false, startX: 0, startY: 0, lastPan: { x: 0, y: 0 } });
+            
+            const [isVideoPlaying, setIsVideoPlaying] = useState(false); 
+            const handleToggleVideoPlay = () => {
+                if (videoPlayerRef.current) {
+                    if (videoPlayerRef.current.paused) {
+                        videoPlayerRef.current.play();
+                    } else {
+                        videoPlayerRef.current.pause();
+                    }
+                }
+            };
+            useEffect(() => {
+                const videoElement = videoPlayerRef.current;
+                if (!videoElement) return;
+
+                const onPlay = () => setIsVideoPlaying(true);
+                const onPause = () => setIsVideoPlaying(false);
+                const onEnded = () => setIsVideoPlaying(false);
+
+                videoElement.addEventListener('play', onPlay);
+                videoElement.addEventListener('pause', onPause);
+                videoElement.addEventListener('ended', onEnded);
+
+                return () => {
+                    videoElement.removeEventListener('play', onPlay);
+                    videoElement.removeEventListener('pause', onPause);
+                    videoElement.removeEventListener('ended', onEnded);
+                };
+            }, [videoPlayerRef.current]);
+
+            // Splash screen logic
+            useEffect(() => {
+                const timer = setTimeout(() => {
+                    setShowSplashScreen(false);
+                }, 2000); // Splash screen 2 seconds tak dikhegi
+
+                return () => clearTimeout(timer);
+            }, []);
+
+            const handleReset = useCallback(() => { setAppState(AppState.Idle); setElapsedTime(0); setSpeedMPH(null); setSpeedKPH(null); setError(null); }, []);
+            
+            useEffect(() => { const instructionsSeen = localStorage.getItem('bowlingAnalyzerInstructionsSeen'); if (instructionsSeen !== 'true') { setShowInstructions(true); } }, []);
+            const handleCloseInstructions = () => { setShowInstructions(false); localStorage.setItem('bowlingAnalyzerInstructionsSeen', 'true'); };
+            useEffect(() => { if (!profiles.find(p => p.id === activeProfileId)) { setActiveProfileId(GUEST_PROFILE_ID); } }, [profiles, activeProfileId]);
+            
+            const addSpeedEntry = (mph, kph, durationSeconds, pitchDistance, pitchUnit) => {
+                if (kph > MAX_UNREALISTIC_SPEED_KPH) {
+                    console.log(`Unrealistic speed detected: ${kph.toFixed(1)} KPH. Not saving.`);
+                    setError(`Speed ${kph.toFixed(1)} KPH is too high. Not saved.`); 
+                    return;
+                }
+                const newEntry = { id: Date.now(), speedMPH: mph, speedKPH: kph, timestamp: Date.now(), durationSeconds, pitchDistance, pitchUnit };
+                const newHistoryForProfile = [newEntry, ...(history[activeProfileId] || [])];
+                setHistory(prev => ({ ...prev, [activeProfileId]: newHistoryForProfile }));
+            };
+
+            const handleClearHistory = () => { if (window.confirm(`Are you sure you want to clear all history for ${activeProfile.name}?`)) { setHistory(prev => ({ ...prev, [activeProfileId]: [] })); } };
+            const handleDeleteHistoryItem = (itemId) => { setHistory(prev => ({ ...prev, [activeProfileId]: (prev[activeProfileId] || []).filter(item => item.id !== itemId) })); };
+            const handleAddProfile = (profileData) => { const newProfile = { ...profileData, id: `profile_${Date.now()}` }; setProfiles(prev => [...prev, newProfile]); setHistory(prev => ({...prev, [newProfile.id]: [] })); setActiveProfileId(newProfile.id); };
+            const handleDeleteProfile = (profileId) => { if (profileId === GUEST_PROFILE_ID) return; if (window.confirm("Are you sure you want to delete this profile and all its history?")) { setProfiles(prev => prev.filter(p => p.id !== profileId)); setHistory(prev => { const newHistory = { ...prev }; delete newHistory[profileId]; return newHistory; }); if (activeProfileId === profileId) { setActiveProfileId(GUEST_PROFILE_ID); } } };
+            const handleSwitchProfile = (profileId) => { setActiveProfileId(profileId); setIsProfileModalOpen(false); };
+            useEffect(() => { return () => { if (mediaStream) { mediaStream.getTracks().forEach(track => track.stop()); } }; }, [mediaStream]);
+            
+            useEffect(() => {
+                if (appState === AppState.Timing) {
+                    const timerStartTime = Date.now();
+                    timerRef.current = setInterval(() => {
+                        const newElapsedTime = Date.now() - timerStartTime;
+                        if (newElapsedTime >= 15000) { 
+                            clearInterval(timerRef.current);
+                            setError("Timer auto-reset after 15 seconds."); 
+                            handleReset();
+                            return;
+                        }
+                        setElapsedTime(newElapsedTime);
+                    }, 10);
+                }
+                return () => { if (timerRef.current) { clearInterval(timerRef.current); } };
+            }, [appState, handleReset]);
+
+            useEffect(() => { if (videoPlayerRef.current) videoPlayerRef.current.playbackRate = playbackRate; }, [playbackRate]);
+            useEffect(() => { if (zoom === 1) { setPan({ x: 0, y: 0 }); } }, [zoom]);
+            const getDistanceInFeet = () => { const { distance, unit } = settings; if (unit === 'Meters') return distance * 3.28084; if (unit === 'Yards') return distance * 3; return distance; };
+            const calculateSpeed = (timeSeconds) => { const distanceInFeet = getDistanceInFeet(); if (timeSeconds <= 0 || distanceInFeet <= 0) return { mph: 0, kph: 0 }; const speedFPS = distanceInFeet / timeSeconds; const speedMPH = speedFPS * 0.681818; const speedKPH = speedMPH * 1.60934; return { mph: speedMPH, kph: speedKPH }; };
+            const handleStartStop = () => { if (appState === AppState.Timing) { const timeInSeconds = elapsedTime / 1000; const { mph, kph } = calculateSpeed(timeInSeconds); setSpeedMPH(mph); setSpeedKPH(kph); addSpeedEntry(mph, kph, timeInSeconds, settings.distance, settings.unit); setAppState(AppState.Finished); } else { setElapsedTime(0); setSpeedMPH(null); setSpeedKPH(null); setError(null); setAppState(AppState.Timing); } };
+            const handlePress = () => { handleReset(); setAppState(AppState.Timing); };
+            const handleRelease = () => { 
+                if(appState === AppState.Timing) { 
+                    const timeInSeconds = elapsedTime / 1000; 
+                    const { mph, kph } = calculateSpeed(timeInSeconds); 
+                    setSpeedMPH(mph); setSpeedKPH(kph); 
+                    addSpeedEntry(mph, kph, timeInSeconds, settings.distance, settings.unit); 
+                    setAppState(AppState.Finished); 
+                }
+            };
+            const startRecording = async () => { try { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); setMediaStream(stream); setVideoState(VideoState.Recording); setError(null); const recorder = new MediaRecorder(stream); mediaRecorderRef.current = recorder; const chunks = []; recorder.ondataavailable = (event) => { if (event.data.size > 0) chunks.push(event.data); }; recorder.onstop = () => { const blob = new Blob(chunks, { type: 'video/webm' }); const url = URL.createObjectURL(blob); setVideoBlobUrl(url); setVideoState(VideoState.Reviewing); }; recorder.start(); } catch (err) { setError("Could not start video source. Ensure camera is connected and permission is granted."); setVideoState(VideoState.Idle); } };
+            const stopRecording = () => { mediaRecorderRef.current?.stop(); mediaStream?.getTracks().forEach(track => track.stop()); setMediaStream(null); };
+            const handleFileSelect = (event) => { const file = event.target.files[0]; if (file && file.type.startsWith('video/')) { const url = URL.createObjectURL(file); setVideoBlobUrl(url); setVideoState(VideoState.Reviewing); setError(null); } else { setError("Please select a valid video file."); } };
+            const handleResetVideo = () => {
+                if (videoBlobUrl) URL.revokeObjectURL(videoBlobUrl);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+                setVideoState(VideoState.Idle); setVideoBlobUrl(null); setStartTime(null); setEndTime(null);
+                setSpeedMPH(null); setSpeedKPH(null); setError(null); setVideoDuration(0);
+                setVideoCurrentTime(0); setPlaybackRate(1); setZoom(1); setPan({ x: 0, y: 0 });
+                mediaStream?.getTracks().forEach(track => track.stop()); setMediaStream(null);
+            };
+            const handleAnalyzeAgain = () => { setStartTime(null); setEndTime(null); setSpeedMPH(null); setSpeedKPH(null); setVideoState(VideoState.Reviewing); setZoom(1); setPan({x:0, y:0}); if(videoPlayerRef.current) { videoPlayerRef.current.currentTime = 0; } };
+            
+            const handleSetStart = () => { 
+                if (videoPlayerRef.current) { 
+                    videoPlayerRef.current.pause(); 
+                    setStartTime(videoPlayerRef.current.currentTime); 
+                    setError(null); 
+                    console.log('Set Start Time:', videoPlayerRef.current.currentTime);
+                } 
+            };
+            // --- YAHAN PAR SPEED CALCULATION AUR DISPLAY KA LOGIC WAPAS ADD KIYA GAYA HAI ---
+            const handleSetEnd = () => { 
+                if (videoPlayerRef.current) { 
+                    videoPlayerRef.current.pause(); 
+                    const currentTime = videoPlayerRef.current.currentTime; 
+                    setEndTime(currentTime); 
+                    console.log('Set End Time:', currentTime);
+
+                    if (startTime !== null && currentTime > startTime) { 
+                        const duration = currentTime - startTime;
+                        const { mph, kph } = calculateSpeed(duration);
+                        setSpeedMPH(mph);
+                        setSpeedKPH(kph);
+                        addSpeedEntry(mph, kph, duration, settings.distance, settings.unit); // Speed ko history mein add karein
+                        setVideoState(VideoState.Finished); // Video state ko finished par set karein taake speed display ho
+                        setError(null); 
+                        console.log('Speed calculated and displayed:', kph.toFixed(1), 'KPH');
+                    } else if (startTime === null) { 
+                        setError("Please set the start point first."); 
+                    } else { 
+                        setError("End point must be after the start point."); 
+                    } 
+                } 
+            };
+
+            const handleTimeUpdate = (e) => setVideoCurrentTime(e.currentTarget.currentTime);
+            const handleLoadedMetadata = (e) => setVideoDuration(e.currentTarget.duration);
+            const handleStep = useCallback((direction, frames = 1) => { 
+                if (videoPlayerRef.current) { 
+                    if (!videoPlayerRef.current.paused) videoPlayerRef.current.pause(); 
+                    const stepAmount = FRAME_STEP_SECONDS * frames;
+                    const newTime = videoPlayerRef.current.currentTime + (stepAmount * direction); 
+                    videoPlayerRef.current.currentTime = Math.max(0, Math.min(videoDuration, newTime)); 
+                } 
+            }, [videoDuration]);
+
+          
+            const handlePanStart = (e) => { e.preventDefault(); panStateRef.current = { ...panStateRef.current, isPanning: true, startX: e.clientX || e.touches[0].clientX, startY: e.clientY || e.touches[0].clientY, lastPan: pan }; };
+            const handlePanMove = (e) => { if (!panStateRef.current.isPanning) return; e.preventDefault(); const currentX = e.clientX || e.touches[0].clientX; const currentY = e.clientY || e.touches[0].clientY; const dx = currentX - panStateRef.current.startX; const dy = currentY - panStateRef.current.startY; setPan({ x: panStateRef.current.lastPan.x + dx, y: panStateRef.current.lastPan.y + dy }); };
+            const handlePanEnd = () => { panStateRef.current = { ...panStateRef.current, isPanning: false }; };
+            const Header = () => ( <header className="w-full max-w-4xl flex justify-between items-center p-4"> <h1 className="text-2xl sm:text-3xl font-black tracking-tighter text-white">Bowling <span className="text-cyan-400">Speed Analyzer</span></h1> <div className="flex items-center gap-1 sm:gap-2"> <button onClick={() => setIsHistoryModalOpen(true)} className="group flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-700/50 text-slate-300 hover:bg-slate-600/70 hover:text-white rounded-md transition-colors duration-200" aria-label="Toggle history panel"> <HistoryIcon className="w-5 h-5" /> <span className="hidden sm:inline">History</span> </button> <button onClick={() => setIsProfileModalOpen(true)} className="group flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-700/50 text-slate-300 hover:bg-slate-600/70 hover:text-white rounded-md transition-colors duration-200" aria-label="Toggle profile panel"> <UserCircleIcon className="w-5 h-5" /> <span className="hidden sm:inline">{activeProfile.name}</span> </button> <button onClick={() => setIsSettingsModalOpen(true)} className="group flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-700/50 text-slate-300 hover:bg-slate-600/70 hover:text-white rounded-md transition-colors duration-200" aria-label="Toggle settings panel"> <GearIcon className="w-5 h-5" /> <span className="hidden sm:inline">Settings</span></button> </div> </header> );
+            const ModeSwitcher = () => ( <div className="flex items-center bg-slate-800/80 p-1 rounded-full border border-slate-700 my-6"> <button onClick={() => setAppMode('manual')} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors duration-300 ${appMode === 'manual' ? 'bg-cyan-600 text-white shadow' : 'text-slate-300 hover:bg-slate-700/50'}`}> <StopWatchIcon className="w-5 h-5"/> Manual Timer </button> <button onClick={() => setAppMode('video')} className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors duration-300 ${appMode === 'video' ? 'bg-cyan-600 text-white shadow' : 'text-slate-300 hover:bg-slate-700/50'}`}> <VideoCameraIcon className="w-5 h-5"/> Video Analyzer </button> </div> );
+            const currentSpeedState = appState === AppState.Finished || videoState === VideoState.Finished;
+
+            return (
+              <div className="min-h-screen bg-slate-900 text-white font-sans flex flex-col items-center p-4 selection:bg-cyan-400/20">
+                {showSplashScreen && ( 
+                    <div className={`splash-screen ${!showSplashScreen ? 'fade-out' : ''}`}>
+                        {/* UPDATED: Splash screen icon */}
+                        <img src="splashlogo.png" alt="Bowling Speed Analyzer Logo" className="splash-logo-image" />
+                        <h1 className="text-4xl font-black tracking-tighter text-white">Bowling <span className="text-cyan-400">Speed Analyzer</span></h1>
+                        <p className="text-slate-400 mt-2">Loading...</p>
+                    </div>
+                )}
+                <Header />
+                <main className="flex flex-col items-center justify-center flex-grow w-full py-8">
+                    <div className="w-full max-w-4xl p-4 sm:p-8 bg-slate-800/50 rounded-3xl border border-slate-700/50 shadow-2xl flex flex-col items-center">
+                        { !currentSpeedState && <ModeSwitcher /> }
+                        <div className="w-full flex flex-col items-center justify-center min-h-[24rem]">
+                          { !currentSpeedState && appMode === 'manual' && ( <div className="flex flex-col items-center justify-center space-y-8 text-center w-full"> <div className="flex items-center space-x-2"> <span className="text-slate-400">Click Mode</span> <label className="relative inline-flex items-center cursor-pointer"> <input type="checkbox" checked={isPressAndHoldMode} onChange={() => setIsPressAndHoldMode(!isPressAndHoldMode)} className="sr-only peer" /> <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div> </label> <span className="text-slate-400">Press & Hold Mode</span> </div> <div className="w-64 h-64 bg-slate-800 rounded-full flex items-center justify-center shadow-2xl border-4 border-slate-700"> <span className="text-6xl font-bold text-white tabular-nums"> {(elapsedTime / 1000).toFixed(2)} </span> </div> <div className="flex flex-col sm:flex-row items-center gap-4"> {isPressAndHoldMode ? ( <button onMouseDown={handlePress} onMouseUp={handleRelease} onTouchStart={handlePress} onTouchEnd={handleRelease} className={`px-12 py-4 rounded-full text-2xl font-bold transition-all duration-300 transform hover:scale-105 shadow-lg focus:outline-none focus:ring-4 bg-cyan-600 hover:bg-cyan-500 text-white focus:ring-cyan-400/50`}> Press & Hold </button> ) : ( <button onClick={handleStartStop} className={`px-12 py-4 rounded-full text-2xl font-bold transition-all duration-300 transform hover:scale-105 shadow-lg focus:outline-none focus:ring-4 ${appState === AppState.Timing ? 'bg-red-600 hover:bg-red-500 text-white focus:ring-red-400/50' : 'bg-green-600 hover:bg-green-500 text-white focus:ring-green-400/50'}`}> {appState === AppState.Timing ? 'Stop' : 'Start'} </button> )} <button onClick={handleReset} className="px-8 py-2 bg-slate-600 text-white rounded-full font-semibold hover:bg-slate-500 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed" disabled={appState === AppState.Idle && elapsedTime === 0}> Reset </button> </div> {error && <p className="text-red-400 mt-4">{error}</p>} </div> )}
+                          { !currentSpeedState && appMode === 'video' && ( <div className="flex flex-col items-center justify-center w-full max-w-3xl text-center space-y-6"> {videoState === VideoState.Idle && ( <div className="flex flex-col items-center space-y-4 animate-fade-in"> <p className="max-w-prose text-slate-300">Record a new video or upload an existing one to analyze.</p> <div className="flex flex-col sm:flex-row gap-4"> <button onClick={startRecording} className="group flex items-center justify-center gap-3 px-6 py-3 bg-green-600 text-white font-bold rounded-full text-lg shadow-lg hover:bg-green-500 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-400/50"> <VideoCameraIcon className="w-6 h-6"/> Record Video </button> <input type="file" accept="video/*" ref={fileInputRef} onChange={handleFileSelect} className="hidden" /> <button onClick={() => fileInputRef.current.click()} className="group flex items-center justify-center gap-3 px-6 py-3 bg-cyan-600 text-white font-bold rounded-full text-lg shadow-lg hover:bg-cyan-500 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-cyan-400/50"> <UploadIcon className="w-6 h-6"/> Upload Video </button> </div> {error && <p className="text-red-400 mt-4">{error}</p>} </div> )} {videoState === VideoState.Recording && mediaStream && ( <div className="flex flex-col items-center space-y-4 animate-fade-in"> <div className="text-lg text-red-400 font-bold flex items-center gap-2"> <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span> RECORDING </div> <video ref={el => { if (el) el.srcObject = mediaStream; }} autoPlay muted playsInline className="w-full max-w-2xl rounded-lg shadow-xl border-2 border-red-500/50"></video> <button onClick={stopRecording} className="group flex items-center justify-center gap-3 px-8 py-4 bg-red-600 text-white font-bold rounded-full text-lg shadow-lg hover:bg-red-500 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-red-400/50"> <StopCircleIcon className="w-6 h-6" /> Stop Recording </button> </div> )} 
+                          {(videoState === VideoState.Reviewing) && videoBlobUrl && ( 
+                            // === NAYA VIDEO ANALYZER UI YAHAN SHURU HOTA HAI ===
+                            <div className="fixed inset-0 bg-black z-40 flex flex-col sm:flex-row items-center justify-center text-white p-0">
+                                {/* Top Bar (ya Left Bar agar landscape ho) */}
+                                <div className="absolute top-0 left-0 right-0 p-3 bg-black/50 flex justify-between items-center z-50">
+                                    <button onClick={handleResetVideo} className="text-white p-2 rounded-full hover:bg-slate-700" aria-label="Back to video selection">
+                                        <ArrowLeftIcon className="w-6 h-6"/>
+                                    </button>
+                                    <h3 className="text-white text-lg font-semibold">Video Analyzer</h3>
+                                    <span className="text-slate-400 text-sm">{activeProfile.name}</span>
+                                </div>
+
+                                {/* Video Player */}
+                                <div className="flex-grow w-full h-full flex items-center justify-center relative mt-16 sm:mt-0">
+                                    <div className="video-container w-full h-full">
+                                        <video 
+                                            ref={videoPlayerRef} 
+                                            src={videoBlobUrl} 
+                                            onTimeUpdate={handleTimeUpdate} 
+                                            onLoadedMetadata={handleLoadedMetadata} 
+                                            playsInline 
+                                            controls={false}
+                                            style={{ transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)` }}
+                                            className={`video-player-element w-full h-full object-contain ${zoom > 1 ? 'video-panning' : ''}`}
+                                            onMouseDown={zoom > 1 ? handlePanStart : null}
+                                            onMouseMove={zoom > 1 ? handlePanMove : null}
+                                            onMouseUp={handlePanEnd}
+                                            onMouseLeave={handlePanEnd}
+                                            onTouchStart={zoom > 1 ? handlePanStart : null}
+                                            onTouchMove={zoom > 1 ? handlePanMove : null}
+                                            onTouchEnd={handlePanEnd}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Bottom Bar (ya Right Bar agar landscape ho) */}
+                                <div className="absolute bottom-0 left-0 right-0 p-3 bg-black/50 flex flex-col space-y-2 z-50">
+                                    {/* Current Time / Duration */}
+                                    <div className="flex justify-between text-xs text-slate-400 w-full max-w-2xl mx-auto">
+                                        <span>{formatTime(videoCurrentTime)}</span>
+                                        <span>{formatTime(videoDuration)}</span>
+                                    </div>
+                                    {/* Timeline */}
+                                    <VideoTimeline duration={videoDuration} currentTime={videoCurrentTime} startTime={startTime} endTime={endTime} />
+
+                                    {/* Playback/Step/Marking/Zoom controls */}
+                                    <div className="flex justify-around items-center gap-2 flex-wrap sm:flex-nowrap">
+                                        {/* Playback rate */}
+                                        <div className="flex items-center gap-1 order-1 sm:order-none">
+                                            {[0.25, 0.5, 1, 1.5].map(rate => (
+                                                <button key={rate} onClick={() => setPlaybackRate(rate)} className={`px-2 py-1 text-xs font-semibold rounded-md transition-colors ${playbackRate === rate ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}> {rate}x </button>
+                                            ))}
+                                        </div>
+
+                                        {/* Step and Play/Pause buttons */}
+                                        <div className="flex items-center gap-2 order-2 sm:order-none">
+                                            <button onClick={() => handleStep(-10)} className="p-2 bg-slate-700 rounded-full hover:bg-slate-600 transition-colors text-sm" aria-label="Step Backward 10 Frames"><FastRewindIcon className="w-5 h-5 text-white" /></button>
+                                            <button onClick={() => handleStep(-5)} className="p-2 bg-slate-700 rounded-full hover:bg-slate-600 transition-colors text-sm" aria-label="Step Backward 5 Frames"><StepBackwardIcon className="w-6 h-6 text-white" /></button>
+                                            <button onClick={() => handleStep(-1)} className="p-2 bg-slate-700 rounded-full hover:bg-slate-600 transition-colors" aria-label="Step Backward 1 Frame"><StepBackwardIcon className="w-6 h-6 text-white" /></button>
+                                            
+                                            <button onClick={handleToggleVideoPlay} className="p-2 bg-cyan-600 rounded-full hover:bg-cyan-500 transition-colors" aria-label={isVideoPlaying ? "Pause Video" : "Play Video"}>
+                                                {isVideoPlaying ? <PauseIcon className="w-6 h-6 text-white" /> : <PlayIcon className="w-6 h-6 text-white" />}
+                                            </button>
+
+                                            <button onClick={() => handleStep(1)} className="p-2 bg-slate-700 rounded-full hover:bg-slate-600 transition-colors" aria-label="Step Forward 1 Frame"><StepForwardIcon className="w-6 h-6 text-white" /></button>
+                                            <button onClick={() => handleStep(5)} className="p-2 bg-slate-700 rounded-full hover:bg-slate-600 transition-colors text-sm" aria-label="Step Forward 5 Frames"><FastForwardIcon className="w-6 h-6 text-white" /></button>
+                                            <button onClick={() => handleStep(10)} className="p-2 bg-slate-700 rounded-full hover:bg-slate-600 transition-colors text-sm" aria-label="Step Forward 10 Frames"><FastForwardIcon className="w-5 h-5 text-white" /></button>
+                                        </div>
+
+                                        {/* Zoom controls */}
+                                        <div className="flex items-center gap-1 order-3 sm:order-none">
+                                            <button onClick={() => setZoom(z => Math.max(1, z - 0.25))} className="px-2 py-1 text-lg font-semibold rounded-md bg-slate-700 text-slate-300 hover:bg-slate-600">-</button>
+                                            <button onClick={() => setZoom(1)} className="px-2 py-1 text-sm font-semibold rounded-md bg-slate-700 text-slate-300 hover:bg-slate-600">Reset</button>
+                                            <button onClick={() => setZoom(z => Math.min(5, z + 0.25))} className="px-2 py-1 text-lg font-semibold rounded-md bg-slate-700 text-slate-300 hover:bg-slate-600">+</button>
+                                        </div>
+                                    </div>
+
+                                    {/* Set Start/End/Reset buttons */}
+                                    <div className="flex justify-center gap-4 mt-3 flex-wrap">
+                                        <button onClick={handleSetStart} className="px-5 py-2 bg-green-600 text-white font-bold rounded-full hover:bg-green-500 transition-colors text-base" disabled={startTime !== null}> {startTime === null ? 'Set Start' : `Start: ${startTime.toFixed(2)}s`} </button>
+                                        <button onClick={handleSetEnd} className="px-5 py-2 bg-red-600 text-white font-bold rounded-full hover:bg-red-500 transition-colors text-base" disabled={startTime === null}> Set End </button>
+                                        <button onClick={handleResetVideo} className="px-5 py-2 bg-slate-600 text-white font-semibold rounded-full hover:bg-slate-500 transition-colors text-base"> Reset Video </button>
+                                    </div>
+                                    {error && <p className="text-red-400 mt-4 text-sm text-center">{error}</p>}
+                                </div>
+                            </div> 
+                          )} 
+                          </div> 
+                          )}
+                          { currentSpeedState && speedMPH !== null && speedKPH !== null && ( 
+                            <div className="flex flex-col items-center gap-8 w-full"> 
+                                <SpeedDisplay 
+                                    speedMPH={speedMPH} 
+                                    speedKPH={speedKPH}
+                                    distance={settings.distance} 
+                                    distanceUnit={settings.unit} 
+                                    timeSeconds={(appMode === 'manual' ? elapsedTime / 1000 : (endTime - startTime))} 
+                                /> 
+                                {appMode === 'manual' && <button onClick={handleReset} className="px-8 py-2 bg-slate-600 text-white font-semibold rounded-full hover:bg-slate-500 transition-colors"> Reset Timer </button>} 
+                                {appMode === 'video' && videoState === VideoState.Finished && ( 
+                                    <div className="flex flex-col sm:flex-row gap-4 mt-4"> 
+                                        <button onClick={handleAnalyzeAgain} className="px-6 py-3 bg-cyan-600 text-white font-bold rounded-full hover:bg-cyan-500 transition-colors text-base"> Analyze Same Video Again </button> 
+                                        <button onClick={handleResetVideo} className="px-6 py-3 bg-slate-600 text-white font-semibold rounded-full hover:bg-slate-500 transition-colors text-base"> Upload New Video </button> 
+                                    </div> 
+                                )} 
+                                {error && <p className="text-red-400 mt-4 text-sm text-center">{error}</p>} 
+                            </div> 
+                          )}
+                        </div>
+                    </div>
+                </main>
+                
+                {showInstructions && <InstructionsModal onClose={handleCloseInstructions} />}
+                {isHistoryModalOpen && <HistoryModal history={activeProfileHistory} onClear={handleClearHistory} onDeleteItem={handleDeleteHistoryItem} onClose={() => setIsHistoryModalOpen(false)} />}
+                {isProfileModalOpen && <ProfileModal profiles={profiles} activeProfileId={activeProfileId} onSwitch={handleSwitchProfile} onDelete={handleDeleteProfile} onAdd={handleAddProfile} onClose={() => setIsProfileModalOpen(false)} />}
+                
+                {isSettingsModalOpen && <SettingsModal 
+                    settings={settings} 
+                    onSave={setSettings} 
+                    onOpenAbout={() => { setIsSettingsModalOpen(false); setIsAboutModalOpen(true); }}
+                    onOpenInstructions={() => { setIsSettingsModalOpen(false); setShowInstructions(true); }}
+                    onClose={() => setIsSettingsModalOpen(false)} 
+                />}
+                
+                {isAboutModalOpen && <AboutModal onClose={() => setIsAboutModalOpen(false)} />}
+              </div>
+            );
+        }
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+</body>
+</html>
